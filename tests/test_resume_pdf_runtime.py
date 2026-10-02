@@ -116,6 +116,47 @@ class ResumeArtifactTests(unittest.TestCase):
         self.assertTrue(any("模型新增了原始简历中不存在的数据" in issue for issue in issues))
         self.assertTrue(any("50%" in issue for issue in issues))
 
+    def test_date_fact_validation_allows_equivalent_formatting(self):
+        from bosshunter.ai.resume import _find_new_fact_tokens
+
+        base_resume = (
+            "教育经历 2024 年8月–2026 年5月\n"
+            "工作经历 2026年8月–2026 年9月\n"
+            "项目经历 2025.09–2025-12\n"
+        )
+        generated = (
+            "教育经历 2024年08月–2026年05月\n"
+            "工作经历 2026-08–2026.09\n"
+            "项目经历 2025年9月–2025年12月\n"
+        )
+
+        self.assertEqual(_find_new_fact_tokens(generated, base_resume), [])
+
+    def test_date_fact_validation_still_blocks_changed_month(self):
+        from bosshunter.ai.resume import _find_new_fact_tokens
+
+        introduced = _find_new_fact_tokens(
+            "教育经历 2024年8月–2026年6月\n",
+            "教育经历 2024 年8月–2026 年5月\n",
+        )
+
+        self.assertIn("2026年6月", introduced)
+
+    def test_numeric_fact_validation_allows_spacing_after_chinese_text(self):
+        from bosshunter.ai.resume import _find_new_fact_tokens
+
+        base_resume = "质量提升约15%，生成1000+条数据，人工工作量减少约70%。"
+        generated = "质量提升约 15%，生成 1000+ 条数据，人工工作量减少约 70%。"
+
+        self.assertEqual(_find_new_fact_tokens(generated, base_resume), [])
+
+    def test_numeric_fact_validation_still_blocks_changed_value(self):
+        from bosshunter.ai.resume import _find_new_fact_tokens
+
+        introduced = _find_new_fact_tokens("质量提升约20%。", "质量提升约15%。")
+
+        self.assertIn("20%", introduced)
+
     @patch("bosshunter.ai.resume._render_pdf")
     @patch("bosshunter.ai.resume._call_claude")
     @patch("bosshunter.ai.resume.get_db")

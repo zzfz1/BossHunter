@@ -234,15 +234,37 @@ PLACEHOLDER_PATTERNS = [
     re.compile(r"(?:待填写|待补充|请填写|占位符)(?:[：:][^\s，。；;\n]{0,40})?"),
 ]
 
+DATE_FACT_TOKEN_PATTERN = re.compile(
+    r"""
+    (?<!\d)
+    (?:19|20)\d{2}
+    (?:
+        \s*年
+        (?:
+            \s*(?:0?[1-9]|1[0-2])\s*月
+            (?:\s*(?:0?[1-9]|[12]\d|3[01])\s*日)?
+        )?
+        |
+        [./-](?:0?[1-9]|1[0-2])
+        (?:[./-](?:0?[1-9]|[12]\d|3[01]))?
+    )?
+    (?!\d)
+    """,
+    re.X,
+)
+
+NUMERIC_FACT_TOKEN_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_.])\d+(?:\.\d+)?(?:\s*[-~至到]\s*\d+(?:\.\d+)?)?\s*"
+    r"(?:%|％|年|个月|月|天|人|次|篇|万|亿|元|K|k|W|w|倍|\+)(?![A-Za-z0-9_])"
+)
+
+
 FACT_TOKEN_PATTERNS = [
     re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])"),
     re.compile(r"https?://[^\s)>）】]+", re.I),
     re.compile(r"(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)"),
-    re.compile(r"(?<!\d)(?:19|20)\d{2}(?:[./年-](?:0?[1-9]|1[0-2]))?(?:[./月-](?:0?[1-9]|[12]\d|3[01]))?(?:日)?(?!\d)"),
-    re.compile(
-        r"(?<![\w.])\d+(?:\.\d+)?(?:\s*[-~至到]\s*\d+(?:\.\d+)?)?\s*"
-        r"(?:%|％|年|个月|月|天|人|次|篇|万|亿|元|K|k|W|w|倍|\+)(?!\w)"
-    ),
+    DATE_FACT_TOKEN_PATTERN,
+    NUMERIC_FACT_TOKEN_PATTERN,
 ]
 
 _resume_failure_reasons: dict[str, str] = {}
@@ -255,13 +277,31 @@ def _find_resume_artifacts(markdown_text: str) -> list[str]:
 
 
 def _normalize_validation_token(token: str) -> str:
-    return re.sub(r"\s+", "", token).lower()
+    compact = re.sub(r"\s+", "", token).lower()
+    if DATE_FACT_TOKEN_PATTERN.fullmatch(token.strip()):
+        # Treat presentation-only date changes as equivalent. PDF extraction and
+        # LLM formatting commonly turn `2024 年8月` into `2024年8月`, while
+        # numeric resumes may express the same month as `2024-08` or `2024.08`.
+        date_parts = compact.translate(
+            str.maketrans({"年": "-", "月": "-", "日": "", ".": "-", "/": "-"})
+        )
+        normalized_parts = [str(int(part)) for part in date_parts.split("-") if part]
+        return "date:" + "-".join(normalized_parts)
+    return compact
 
 
 def _extract_validation_tokens(text: str, patterns: list[re.Pattern]) -> list[str]:
+    source = text or ""
+    date_spans = [match.span() for match in DATE_FACT_TOKEN_PATTERN.finditer(source)]
     tokens: list[str] = []
     for pattern in patterns:
-        tokens.extend(match.group(0).strip() for match in pattern.finditer(text or ""))
+        for match in pattern.finditer(source):
+            if pattern is NUMERIC_FACT_TOKEN_PATTERN and any(
+                match.start() < date_end and match.end() > date_start
+                for date_start, date_end in date_spans
+            ):
+                continue
+            tokens.append(match.group(0).strip())
     return tokens
 
 
