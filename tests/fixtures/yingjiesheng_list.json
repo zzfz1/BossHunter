@@ -4,5 +4,6 @@
     {"title": "AI 工程师", "company": "示例科技", "city": "上海", "salary": "", "education": "本科", "experience": "", "url": "https://q.yingjiesheng.com/jobdetail/1001.html"},
     {"title": "数据分析实习生", "company": "示例研究院", "city": "上海", "salary": "", "education": "", "experience": "", "url": "https://careers.example.org/jobs/abc"}
   ],
-  "next_url": "https://q.yingjiesheng.com/jobs/search/AI?page=2"
+  "page_index": 1,
+  "has_next": true
 }

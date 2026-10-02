@@ -28,6 +28,7 @@ class FakeBrowser:
         self.lists = iter(lists)
         self.detail = detail or fixture("yingjiesheng_detail.json")
         self.urls = []
+        self.clicks = []
         self.closed = []
         self.next_tab = 0
 
@@ -41,6 +42,10 @@ class FakeBrowser:
 
     def navigate(self, tab, url):
         self.urls.append((tab, url))
+        return True
+
+    def click(self, tab, selector):
+        self.clicks.append((tab, selector))
         return True
 
     def wait_for_load(self, tab, timeout=15):
@@ -75,7 +80,7 @@ def collector(browser):
 
 def test_list_detail_external_pagination_and_duplicate_filter():
     first = fixture("yingjiesheng_list.json")
-    second = {"status": "ready", "jobs": [first["jobs"][0]], "next_url": ""}
+    second = {"status": "ready", "jobs": [first["jobs"][0]], "page_index": 2, "has_next": False}
     browser = FakeBrowser([first, second])
     saved = []
     result = collector(browser).collect(request(), hooks(saved))
@@ -88,7 +93,8 @@ def test_list_detail_external_pagination_and_duplicate_filter():
     assert saved[1].source_job_id.startswith("external-")
     assert saved[1].url == "https://careers.example.org/jobs/abc"
     assert not any("careers.example.org" in url for _, url in browser.urls)
-    assert len([url for _, url in browser.urls if "/jobs/search/" in url]) == 2
+    assert len([url for _, url in browser.urls if "/jobs/search/" in url]) == 1
+    assert browser.clicks == [("1", ".el-pagination .btn-next:not([disabled])")]
 
 
 def test_missing_fields_do_not_get_invented_and_unsafe_url_is_rejected():
@@ -98,6 +104,7 @@ def test_missing_fields_do_not_get_invented_and_unsafe_url_is_rejected():
     assert candidate_from_list({**raw, "url": "javascript:alert(1)"}, "AI") is None
     assert candidate_from_list({**raw, "company": ""}, "AI") is None
     assert candidate_from_list({**raw, "url": "https://careers.example.org/a", "source_job_id": "ext-42"}, "AI").source_job_id == "ext-42"
+    assert candidate_from_list({**raw, "recruitment_type": "实习"}, "AI").recruitment_type == "campus"
     browser = FakeBrowser([{"status": "ready", "jobs": [{**raw, "company": ""}], "next_url": ""}])
     with pytest.raises(CollectionBlockedError) as captured:
         collector(browser).collect(request(), hooks([]))
@@ -140,8 +147,28 @@ def test_waits_for_dynamic_list_once_then_fails_closed_on_timeout():
     assert result.status == "completed"
     assert len(saved) == 1
     with pytest.raises(CollectionBlockedError) as captured:
-        collector(FakeBrowser([{"status": "waiting"}] * 4)).collect(request(), hooks([]))
+        collector(FakeBrowser([{"status": "waiting"}] * 8)).collect(request(), hooks([]))
     assert captured.value.code == "render_timeout"
+
+
+def test_pagination_waits_for_new_page_before_processing():
+    first = fixture("yingjiesheng_list.json")
+    second = {"status": "ready", "jobs": [first["jobs"][0]], "page_index": 2, "has_next": False}
+    browser = FakeBrowser([first, first, second])
+    saved = []
+    result = collector(browser).collect(request(), hooks(saved))
+    assert result.status == "completed"
+    assert len(saved) == 2
+    assert len(browser.clicks) == 1
+
+
+def test_pagination_stops_when_site_does_not_advance():
+    first = fixture("yingjiesheng_list.json")
+    browser = FakeBrowser([first] * 9)
+    with pytest.raises(CollectionBlockedError) as captured:
+        collector(browser).collect(request(), hooks([]))
+    assert captured.value.code == "render_timeout"
+    assert len(browser.clicks) == 1
 
 
 def test_config_has_no_foreign_city_code_and_caps_pages():
@@ -158,7 +185,7 @@ def test_config_has_no_foreign_city_code_and_caps_pages():
 
 def test_orchestrator_persists_platform_identity_and_queues_scoring():
     page = fixture("yingjiesheng_list.json")
-    page["next_url"] = ""
+    page["has_next"] = False
     browser = FakeBrowser([page])
     registry = CollectorRegistry({"yingjiesheng": lambda: collector(browser)})
     options = {

@@ -1,9 +1,4 @@
-"""Read-only YingJieSheng collector.
-
-The live search page showed a verification wall during development. The DOM
-contract below is intentionally narrow and fails closed if the page changes.
-No application, upload, messaging or challenge interaction is performed.
-"""
+"""Read-only YingJieSheng collector using the site's rendered search results."""
 
 from __future__ import annotations
 
@@ -16,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import quote, urlparse
 
-from bosshunter.browser import close_tab, evaluate, navigate, new_tab, wait_for_load
+from bosshunter.browser import click, close_tab, evaluate, navigate, new_tab, wait_for_load
 from bosshunter.collection.base import CollectionBlockedError, CollectorHooks
 from bosshunter.collection.models import JobCandidate, PlatformCollectionRequest, PlatformCollectionResult
 
@@ -26,8 +21,9 @@ PAGE_LIMIT = 3
 PAGE_DELAY = (15.0, 25.0)
 DETAIL_DELAY = (6.0, 12.0)
 
-# This fallback is based on public route and DOM observations in the referenced
-# projects, not an assertion that selectors still match the live logged-in site.
+# The search API uses dynamic request signing and account headers. Let the site
+# request its own JSON data, then read the public job objects already rendered
+# on the page. The visible cards have no job link or ID in their HTML.
 JS_LIST = r"""
 (() => {
   const body = document.body?.innerText || '';
@@ -42,24 +38,33 @@ JS_LIST = r"""
   if (!cards.length) {
     return JSON.stringify({status: /暂无符合条件的职位|没有找到相关职位|暂无职位/.test(body) ? 'empty' : (document.querySelector('.search-list') || body.length < 300) ? 'waiting' : 'selector_changed'});
   }
-  const read = (el, selectors) => selectors.map(s => el.querySelector(s)?.innerText?.trim()).find(Boolean) || '';
+  const jobButton = card => [...card.querySelectorAll('.btn')].find(el => el.__vue__?._props?.jobinfo);
+  const first = jobButton(cards[0])?.__vue__;
+  if (!first) return JSON.stringify({status:'waiting'});
+  if (first?.$parent?._props?.loading) return JSON.stringify({status:'waiting'});
   const jobs = cards.map(card => {
-    const anchor = card.querySelector('a[href*="/jobdetail/"]') || card.querySelector('a[href]');
-    const outbound = card.querySelector('a[data-jump-url], a[jumpurl]');
-    const href = outbound?.getAttribute('data-jump-url') || outbound?.getAttribute('jumpurl') || anchor?.href || '';
+    const job = jobButton(card)?.__vue__?._props?.jobinfo;
+    if (!job) return null;
+    const id = String(job.jobid || '');
+    const external = String(job.isJump) === '1' || String(job.isReprintJob) === '1';
+    const url = external
+      ? (job.reprintFromUrl || job.jumpUrlHttp || '')
+      : /^\d+$/.test(id) ? `https://q.yingjiesheng.com/jobdetail/${id}.html` : '';
     return {
-      source_job_id: card.getAttribute('data-jobid') || card.getAttribute('data-job-id') || '',
-      title: read(card, ['.left-title-name', 'a[href*="/jobdetail/"]']),
-      company: read(card, ['.left-detail-company']),
-      city: read(card, ['.left-detail-city', '.left-detail-location']),
-      salary: read(card, ['.left-detail-salary', '.salary']),
-      education: read(card, ['.left-detail-degree', '.degree']),
-      experience: read(card, ['.left-detail-workyear', '.workyear']),
-      url: href
+      source_job_id: id,
+      title: String(job.jobname || ''),
+      company: String(job.coname || ''),
+      city: String(job.jobarea || ''),
+      salary: String(job.providesalary || ''),
+      education: String(job.degree || ''),
+      experience: String(job.workyear || ''),
+      recruitment_type: String(job.jobterm || ''),
+      url
     };
   });
-  const next = [...document.querySelectorAll('a[href]')].find(a => /^(下一页|下页)$/.test(a.innerText.trim()) && !a.hasAttribute('disabled'));
-  return JSON.stringify({status:'ready', jobs, next_url:next?.href || ''});
+  const active = document.querySelector('.el-pagination .el-pager .number.active');
+  const next = document.querySelector('.el-pagination .btn-next');
+  return JSON.stringify({status:'ready', jobs, page_index:active ? Number(active.innerText) : 1, has_next:!!next && !next.disabled});
 })()
 """
 
@@ -75,14 +80,15 @@ JS_DETAIL = r"""
     return JSON.stringify({status:'rate_limit'});
   if (/请登录|登录后查看|扫码登录|立即登录/.test(signal) && !document.querySelector('.detail-content'))
     return JSON.stringify({status:'login_required'});
-  const content = document.querySelector('.detail-content');
+  const content = document.querySelector('.detail-content-common.jobinfo .text') || document.querySelector('.detail-content');
   if (!content) return JSON.stringify({status:body.length < 300 ? 'waiting' : 'selector_changed'});
   const read = selectors => selectors.map(s => document.querySelector(s)?.innerText?.trim()).find(Boolean) || '';
   return JSON.stringify({
     status:'ready',
-    title:read(['.detail-title-left-name', 'h1']),
+    title:read(['.detail-title-left-top .job', '.detail-title-left-name', 'h1']),
     company:read(['.detail-content-compnav-center']),
-    city:read(['.detail-title-left-center']),
+    city:read(['.detail-title-left-center .item:first-child span']),
+    salary:read(['.detail-title-left-top .salary']),
     jd:content.innerText.trim(),
     url:location.href
   });
@@ -95,6 +101,7 @@ class YingjieshengBrowser:
     new_tab: Callable[..., str | None] = new_tab
     close_tab: Callable[[str], bool] = close_tab
     navigate: Callable[[str, str], bool] = navigate
+    click: Callable[[str, str], bool] = click
     evaluate: Callable[..., Any] = evaluate
     wait_for_load: Callable[..., bool] = wait_for_load
 
@@ -139,6 +146,7 @@ def candidate_from_list(raw: Any, keyword: str) -> JobCandidate | None:
         city=str(raw.get("city") or "").strip(), salary=str(raw.get("salary") or "").strip(),
         education=str(raw.get("education") or "").strip(), experience=str(raw.get("experience") or "").strip(),
         url=url, source_keyword=keyword,
+        recruitment_type="campus" if str(raw.get("recruitment_type") or "").strip() == "实习" else "unknown",
     )
 
 
@@ -185,12 +193,16 @@ class YingjieshengCollector:
         self.sleep(delay)
         return False
 
-    def _read(self, tab: str, expression: str, hooks: CollectorHooks) -> dict[str, Any]:
-        for attempt in range(4):
+    def _read(self, tab: str, expression: str, hooks: CollectorHooks, *, page: int | None = None) -> dict[str, Any]:
+        for attempt in range(8):
             result = _payload(self.browser.evaluate(tab, expression))
+            if result.get("status") == "ready" and page is not None:
+                actual = result.get("page_index")
+                if actual is not None and actual != page:
+                    result = {"status": "waiting"}
             if result.get("status") != "waiting":
                 return result
-            if attempt < 3 and self._wait(hooks, 1.0):
+            if attempt < 7 and self._wait(hooks, 1.0):
                 return {"status": "stopped"}
         raise CollectionBlockedError("render_timeout", "应届生求职页面未完成加载，已停止采集")
 
@@ -209,11 +221,14 @@ class YingjieshengCollector:
                         return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
                     if page > 1 and self._wait(hooks, self.uniform(*self.page_delay)):
                         return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
-                    if not _safe_url(search_url, search=True) or not self.browser.navigate(target, search_url):
-                        raise CollectionBlockedError("navigation_failed", "应届生求职搜索页无法安全打开")
-                    self.browser.wait_for_load(target, timeout=15)
+                    if page == 1:
+                        if not _safe_url(search_url, search=True) or not self.browser.navigate(target, search_url):
+                            raise CollectionBlockedError("navigation_failed", "应届生求职搜索页无法安全打开")
+                        self.browser.wait_for_load(target, timeout=15)
+                    elif not self.browser.click(target, ".el-pagination .btn-next:not([disabled])"):
+                        raise CollectionBlockedError("navigation_failed", "应届生求职无法安全翻页")
                     hooks.on_event(phase="loading_list", keyword=keyword, page=page, message="只读采集；城市按岗位实际地点过滤")
-                    payload = self._read(target, JS_LIST, hooks)
+                    payload = self._read(target, JS_LIST, hooks, page=page)
                     if payload.get("status") == "stopped":
                         return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
                     status = self._check_status(payload)
@@ -274,12 +289,8 @@ class YingjieshengCollector:
                         raise CollectionBlockedError("selector_changed", "应届生求职岗位字段无法解析，已停止采集")
                     if not hooks.can_checkpoint():
                         return PlatformCollectionResult(self.platform, "failed", "save_failed", "岗位保存失败，已停止")
-                    next_url = str(payload.get("next_url") or "")
-                    if not next_url:
+                    if not payload.get("has_next"):
                         break
-                    if not _safe_url(next_url, search=True) or next_url == search_url:
-                        raise CollectionBlockedError("selector_changed", "应届生求职翻页链接异常，已停止采集")
-                    search_url = next_url
             finally:
                 self.browser.close_tab(target)
         return PlatformCollectionResult(self.platform, "completed", "search_exhausted", "应届生求职只读采集完成")
