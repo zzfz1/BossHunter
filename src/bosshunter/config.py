@@ -148,6 +148,7 @@ DEFAULTS: dict[str, Any] = {
         },
         "yingjiesheng": {
             "enabled": False,
+            "application_enabled": False,
             "search": {
                 "keywords": [], "cities": [], "city_codes": {},
                 "max_pages": 1, "sort": "default",

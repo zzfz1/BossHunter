@@ -85,7 +85,9 @@ platforms:
       sort: default
   yingjiesheng:
     enabled: false
-    # 只读采集与评分；城市按岗位页面的实际地点过滤，不使用其他平台城市编码。
+    # 采集、评分、草稿和人工进度记录；城市按岗位实际地点过滤，不使用其他平台城市编码。
+    # 单岗位申请须先通过真实登录态验收；启用后仍需逐岗人工确认。
+    application_enabled: false
     search:
       keywords: []
       cities: []

@@ -70,6 +70,9 @@ from bosshunter.db import (
 	update_jobs_manual_status,
 )
 from bosshunter.collection.capabilities import platform_supports
+from bosshunter.ai.yingjiesheng_drafts import DraftError, generate_copyable_draft
+from bosshunter.executor.yingjiesheng import YingjieshengActionError, YingjieshengApplicationService
+from bosshunter.yingjiesheng_progress import ProgressError, get_manual_progress, record_manual_progress
 from bosshunter.collection.orchestrator import CollectionOrchestrator, normalize_collection_options
 from bosshunter.collection.platforms.zhilian import load_zhilian_city_snapshot
 from bosshunter.collection.platforms.job51 import load_51job_city_snapshot
@@ -123,6 +126,7 @@ app = Bottle()
 task_runner = WorkbenchTaskRunner()
 job_mutation_lock = Lock()
 greeting_activity = GreetingActivityRegistry()
+yingjiesheng_applications = YingjieshengApplicationService()
 
 
 def _is_loopback_address(value: str) -> bool:
@@ -3176,6 +3180,152 @@ def api_jobs_manual_sent():
 		return _json_response(result)
 	except (ValueError, JobManualSentConflictError) as exc:
 		return _job_action_error(exc)
+	finally:
+		db.close()
+
+
+def _local_workbench_request_error():
+	"""Require the local workbench origin for platform and resume-based actions."""
+	peer = str(request.environ.get("REMOTE_ADDR") or "")
+	host = str(request.environ.get("HTTP_HOST") or "")
+	origin = str(request.environ.get("HTTP_ORIGIN") or "")
+	if not _is_loopback_address(peer) or not host or origin != f"{request.environ.get('wsgi.url_scheme', 'http')}://{host}":
+		return _json_response({"error": "只能从本机工作台操作应届生岗位", "code": "local_origin_required"}, 403)
+	return None
+
+
+def _yingjiesheng_application_request():
+	"""Keep the unverified application adapter disabled by default."""
+	if error := _local_workbench_request_error():
+		return None, error
+	config = load_config(CONFIG_PATH)
+	if config.get("platforms", {}).get("yingjiesheng", {}).get("application_enabled") is not True:
+		return None, _json_response({"error": "应届生申请尚未通过真实页面验收，当前未启用", "code": "application_disabled"}, 403)
+	return config, None
+
+
+def _yingjiesheng_application_job(db, body):
+	if not isinstance(body, dict) or not isinstance(body.get("job_id"), str):
+		raise YingjieshengActionError("invalid_request", "必须指定一个岗位 ID")
+	row = db.execute("SELECT * FROM jobs WHERE id = ? AND source_platform = 'yingjiesheng'", (body["job_id"],)).fetchone()
+	if row is None:
+		raise YingjieshengActionError("job_not_found", "应届生岗位不存在")
+	return dict(row)
+
+
+@app.route("/api/yingjiesheng/applications/prepare", method="POST")
+def api_yingjiesheng_application_prepare():
+	config, error = _yingjiesheng_application_request()
+	if error is not None:
+		return error
+	db = _get_web_db()
+	try:
+		with job_mutation_lock:
+			conflict = _active_task_mutation_error()
+			if conflict is not None:
+				return conflict
+			job = _yingjiesheng_application_job(db, request.json)
+			result = yingjiesheng_applications.prepare(db, job, config)
+		return _json_response(result)
+	except YingjieshengActionError as exc:
+		return _json_response({"error": str(exc), "code": exc.code}, 409)
+	finally:
+		db.close()
+
+
+@app.route("/api/yingjiesheng/applications/confirm", method="POST")
+def api_yingjiesheng_application_confirm():
+	config, error = _yingjiesheng_application_request()
+	if error is not None:
+		return error
+	db = _get_web_db()
+	try:
+		with job_mutation_lock:
+			conflict = _active_task_mutation_error()
+			if conflict is not None:
+				return conflict
+			body = request.json
+			job = _yingjiesheng_application_job(db, body)
+			if not isinstance(body.get("confirmation_token"), str):
+				raise YingjieshengActionError("confirmation_required", "申请前必须逐岗预览并确认")
+			if body.get("confirmed") is not True:
+				raise YingjieshengActionError("confirmation_required", "申请前必须由用户逐岗确认")
+			result = yingjiesheng_applications.confirm(
+				db, job, config,
+				token=body["confirmation_token"],
+				confirmed=body.get("confirmed") is True,
+			)
+		return _json_response(result)
+	except YingjieshengActionError as exc:
+		return _json_response({"error": str(exc), "code": exc.code}, 409)
+	finally:
+		db.close()
+
+
+@app.route("/api/yingjiesheng/applications/cancel", method="POST")
+def api_yingjiesheng_application_cancel():
+	_, error = _yingjiesheng_application_request()
+	if error is not None:
+		return error
+	body = request.json
+	if not isinstance(body, dict) or not isinstance(body.get("confirmation_token"), str):
+		return _json_response({"error": "确认令牌无效", "code": "invalid_request"}, 400)
+	yingjiesheng_applications.cancel(body["confirmation_token"])
+	return _json_response({"cancelled": True})
+
+
+@app.route("/api/yingjiesheng/drafts", method="POST")
+def api_yingjiesheng_drafts():
+	if error := _local_workbench_request_error():
+		return error
+	db = _get_web_db()
+	try:
+		body = request.json
+		job = _yingjiesheng_application_job(db, body)
+		kind = str(body.get("kind") or "")
+		context = str(body.get("context") or "")
+		text = generate_copyable_draft(job, load_config(CONFIG_PATH), kind=kind, context=context)
+		return _json_response({"kind": kind, "text": text, "sent": False})
+	except (YingjieshengActionError, DraftError) as exc:
+		return _json_response({"error": str(exc), "code": exc.code}, 400)
+	except AIRequestError as exc:
+		return _json_response({"error": exc.user_message, "code": exc.kind}, 503)
+	finally:
+		db.close()
+
+
+@app.route("/api/yingjiesheng/progress/<job_id>")
+def api_yingjiesheng_progress(job_id):
+	db = _get_web_db()
+	try:
+		return _json_response(get_manual_progress(db, job_id))
+	except ProgressError as exc:
+		return _json_response({"error": str(exc), "code": exc.code}, 409)
+	finally:
+		db.close()
+
+
+@app.route("/api/yingjiesheng/progress", method="POST")
+def api_yingjiesheng_record_progress():
+	if error := _local_workbench_request_error():
+		return error
+	db = _get_web_db()
+	try:
+		body = request.json
+		if not isinstance(body, dict) or not isinstance(body.get("job_id"), str):
+			raise ProgressError("invalid_request", "必须指定一个岗位 ID")
+		with job_mutation_lock:
+			conflict = _active_task_mutation_error()
+			if conflict is not None:
+				return conflict
+			result = record_manual_progress(
+				db, body["job_id"], str(body.get("status") or ""),
+				str(body.get("next_check_date") or ""),
+				confirmed=body.get("confirmed") is True,
+			)
+		return _json_response(result)
+	except ProgressError as exc:
+		return _json_response({"error": str(exc), "code": exc.code}, 409)
 	finally:
 		db.close()
 
