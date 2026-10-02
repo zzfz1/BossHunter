@@ -17,6 +17,9 @@ interface JobsTableProps {
   onToggleSelected: (id: string) => void
   onSoftDelete?: (job: Job) => void
   onMarkManuallySent?: (job: Job) => void
+  onYingjieshengDraft?: (job: Job) => void
+  onYingjieshengApply?: (job: Job) => void
+  onYingjieshengProgress?: (job: Job) => void
   onStatusChange?: (job: Job, status: string) => void
   loading?: boolean
   sortBy: JobSortKey
@@ -66,11 +69,11 @@ function statusVariant(status: string) {
   return variants.has(status) ? status : 'default'
 }
 
-export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedIds, onToggleSelected, onSoftDelete, onMarkManuallySent, onStatusChange, loading = false, sortBy, sortOrder, onSortChange }: JobsTableProps) {
+export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedIds, onToggleSelected, onSoftDelete, onMarkManuallySent, onYingjieshengDraft, onYingjieshengApply, onYingjieshengProgress, onStatusChange, loading = false, sortBy, sortOrder, onSortChange }: JobsTableProps) {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [pageInput, setPageInput] = useState(String(page + 1))
   const totalPages = Math.ceil(total / pageSize)
-  const hasActions = Boolean(onSoftDelete || onMarkManuallySent || onStatusChange)
+  const hasActions = Boolean(onSoftDelete || onMarkManuallySent || onYingjieshengDraft || onYingjieshengApply || onYingjieshengProgress || onStatusChange)
 
   useEffect(() => {
     setPageInput(String(page + 1))
@@ -217,6 +220,18 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
                               >
                                 <CheckCircle2 className="h-3.5 w-3.5" />{job.source_platform === 'yingjiesheng' ? (alreadySent ? '已投递' : '我已投递') : (alreadySent ? '已发送' : '我已发送')}
                               </button>
+                            )}
+                            {job.source_platform === 'yingjiesheng' && onYingjieshengDraft && (
+                              <button type="button" onClick={() => onYingjieshengDraft(job)} className="rounded-lg border border-card-border px-2 py-1.5 text-[11px] font-bold text-primary hover:bg-secondary">沟通草稿</button>
+                            )}
+                            {job.source_platform === 'yingjiesheng' && (
+                              <a href="https://q.yingjiesheng.com/pc/myresume" target="_blank" rel="noopener noreferrer" className="rounded-lg border border-card-border px-2 py-1.5 text-[11px] font-bold text-primary hover:bg-secondary">管理简历</a>
+                            )}
+                            {job.source_platform === 'yingjiesheng' && !alreadySent && onYingjieshengApply && (
+                              <button type="button" onClick={() => onYingjieshengApply(job)} className="rounded-lg border border-card-border px-2 py-1.5 text-[11px] font-bold text-primary hover:bg-secondary">准备申请</button>
+                            )}
+                            {job.source_platform === 'yingjiesheng' && alreadySent && onYingjieshengProgress && (
+                              <button type="button" onClick={() => onYingjieshengProgress(job)} className="rounded-lg border border-card-border px-2 py-1.5 text-[11px] font-bold text-primary hover:bg-secondary">投递进度</button>
                             )}
                             {onSoftDelete && (
                               <button type="button" onClick={() => onSoftDelete(job)} className="rounded-lg p-2 text-muted hover:bg-danger-soft hover:text-danger" aria-label={`将 ${job.company} ${job.title} 移入回收站`}>

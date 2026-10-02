@@ -3,6 +3,9 @@ import { useDashboard, type CollectionProgress, type HistoryItem, type Job, type
 import { useJobSearch, type JobSortKey, type JobSortOrder } from '@/hooks/useJobSearch'
 import { Button } from '@/components/ui/button'
 import { JobsTable } from '@/components/dashboard/JobsTable'
+import { YingjieshengDraftDialog } from '@/components/dashboard/YingjieshengDraftDialog'
+import { YingjieshengApplyDialog } from '@/components/dashboard/YingjieshengApplyDialog'
+import { YingjieshengProgressDialog } from '@/components/dashboard/YingjieshengProgressDialog'
 import { RecycleBinPanel } from '@/components/dashboard/RecycleBinPanel'
 import { ScoreJobsDialog } from '@/components/dashboard/ScoreJobsDialog'
 import { CollectJobsDialog } from '@/components/dashboard/CollectJobsDialog'
@@ -1616,12 +1619,27 @@ function JobsPoolView({ updateJobStatus }: { updateJobStatus: (jobId: string, st
   const [recycleSelectedIds, setRecycleSelectedIds] = useState<string[]>([])
   const [recycleLoading, setRecycleLoading] = useState(false)
   const [permanentDeleteIds, setPermanentDeleteIds] = useState<string[]>([])
+  const [yingjieshengDraftJob, setYingjieshengDraftJob] = useState<Job | null>(null)
+  const [yingjieshengApplyJob, setYingjieshengApplyJob] = useState<Job | null>(null)
+  const [yingjieshengProgressJob, setYingjieshengProgressJob] = useState<Job | null>(null)
+  const [yingjieshengApplicationEnabled, setYingjieshengApplicationEnabled] = useState(false)
   const [permanentDeleteAcknowledged, setPermanentDeleteAcknowledged] = useState(false)
   const { items, total, allTotal, loading, error, refresh: refreshJobs } = useJobSearch(filters, page, pageSize, sortBy, sortOrder)
   const { workbench: deliveryWorkbench } = useDashboard('workbench')
   const deliveryTask = deliveryWorkbench.task?.mode === 'deliver'
     ? deliveryWorkbench.task
     : deliveryWorkbench.last_task?.mode === 'deliver' ? deliveryWorkbench.last_task : null
+
+  useEffect(() => {
+    let current = true
+    void fetch('/api/config', { cache: 'no-store' })
+      .then(response => response.ok ? response.json() : null)
+      .then(config => {
+        if (current) setYingjieshengApplicationEnabled(config?.platforms?.yingjiesheng?.application_enabled === true)
+      })
+      .catch(() => {})
+    return () => { current = false }
+  }, [])
 
   useEffect(() => {
     setPage(0)
@@ -1977,12 +1995,18 @@ function JobsPoolView({ updateJobStatus }: { updateJobStatus: (jobId: string, st
         onToggleSelected={toggleSelected}
         onSoftDelete={job => void softDelete([job.id])}
         onMarkManuallySent={job => void markManuallySent(job)}
+        onYingjieshengDraft={setYingjieshengDraftJob}
+        onYingjieshengApply={yingjieshengApplicationEnabled ? setYingjieshengApplyJob : undefined}
+        onYingjieshengProgress={setYingjieshengProgressJob}
         onStatusChange={changeJobStatus}
         loading={loading}
         sortBy={sortBy}
         sortOrder={sortOrder}
         onSortChange={changeSort}
       />
+      {yingjieshengDraftJob && <YingjieshengDraftDialog job={yingjieshengDraftJob} onClose={() => setYingjieshengDraftJob(null)} />}
+      {yingjieshengApplyJob && <YingjieshengApplyDialog job={yingjieshengApplyJob} onClose={() => setYingjieshengApplyJob(null)} onApplied={() => { refreshJobs(); setNotice('应届生平台显示已申请，岗位已标记为已投递。') }} />}
+      {yingjieshengProgressJob && <YingjieshengProgressDialog job={yingjieshengProgressJob} onClose={() => setYingjieshengProgressJob(null)} />}
       <ScoreJobsDialog
         open={showScoreDialog}
         selectedJobIds={selectedIds}

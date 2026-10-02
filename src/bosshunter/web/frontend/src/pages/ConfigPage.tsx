@@ -420,7 +420,7 @@ export default function ConfigPage() {
         <SectionCard title="搜索设置" sectionKey="search" expanded={expandedSections} toggle={toggleSection}>
           <div className="space-y-4">
             <p className="rounded-xl border border-card-border bg-surface px-3 py-2 text-xs leading-5 text-muted">
-              智联、前程无忧和猎聘只自动采集、评分和生成招呼语；应届生求职仅采集与评分。岗位池可打开原岗位，你在平台投递后再手动标记。BossHunter 不会替你自动申请或发送。
+              智联、前程无忧和猎聘只自动采集、评分和生成招呼语。应届生求职可采集、评分并生成可复制的沟通草稿；单岗位申请须通过真实页面验收后单独启用，且每次都要人工确认。外链岗位及消息请在平台手动操作。
             </p>
             {(['boss', 'zhilian', '51job', 'liepin', 'yingjiesheng'] as PlatformId[]).map(platform => {
               const search = platformSearch(platform)
