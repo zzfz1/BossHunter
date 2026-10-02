@@ -83,6 +83,15 @@ platforms:
       city_codes: {}
       max_pages: 1
       sort: default
+  yingjiesheng:
+    enabled: false
+    # 只读采集与评分；城市按岗位页面的实际地点过滤，不使用其他平台城市编码。
+    search:
+      keywords: []
+      cities: []
+      city_codes: {}
+      max_pages: 1
+      sort: default
 
 scoring:
   threshold: 70

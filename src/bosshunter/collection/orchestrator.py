@@ -19,6 +19,7 @@ from bosshunter.collection.platforms.boss import BossCollector, normalize_boss_s
 from bosshunter.collection.platforms.job51 import Job51Collector, get_51job_city_code
 from bosshunter.collection.platforms.liepin import LiepinCollector, get_liepin_city_code
 from bosshunter.collection.platforms.zhilian import ZhilianCollector, get_zhilian_city_code
+from bosshunter.collection.platforms.yingjiesheng import YingjieshengCollector, PAGE_LIMIT as YINGJIESHENG_PAGE_LIMIT
 from bosshunter.collection.registry import CollectorRegistry
 from bosshunter.collection_run_store import (
     boss_combo_key, boss_resume_options, claim_boss_resume, create_collection_run,
@@ -28,12 +29,13 @@ from bosshunter.db import get_db, insert_job_if_new, job_identity_exists
 from bosshunter.job_filters import matching_blocked_company, matching_deal_breaker
 
 
-SUPPORTED_PLATFORMS = {"boss", "zhilian", "51job", "liepin"}
+SUPPORTED_PLATFORMS = {"boss", "zhilian", "51job", "liepin", "yingjiesheng"}
 SORT_OPTIONS = {
     "boss": {"default", "newest"},
     "zhilian": {"default", "newest"},
     "51job": {"default"},
     "liepin": {"default", "newest"},
+    "yingjiesheng": {"default"},
 }
 
 
@@ -76,9 +78,10 @@ def normalize_collection_options(config: dict[str, Any], raw_options: dict[str, 
     zhilian_search = configured_platforms.get("zhilian", {}).get("search", {}) if isinstance(configured_platforms.get("zhilian"), dict) else {}
     job51_search = configured_platforms.get("51job", {}).get("search", {}) if isinstance(configured_platforms.get("51job"), dict) else {}
     liepin_search = configured_platforms.get("liepin", {}).get("search", {}) if isinstance(configured_platforms.get("liepin"), dict) else {}
+    yingjiesheng_search = configured_platforms.get("yingjiesheng", {}).get("search", {}) if isinstance(configured_platforms.get("yingjiesheng"), dict) else {}
 
     platforms: dict[str, Any] = {}
-    for platform, fallback in (("boss", boss_search), ("zhilian", zhilian_search), ("51job", job51_search), ("liepin", liepin_search)):
+    for platform, fallback in (("boss", boss_search), ("zhilian", zhilian_search), ("51job", job51_search), ("liepin", liepin_search), ("yingjiesheng", yingjiesheng_search)):
         value = raw_platforms.get(platform) if isinstance(raw_platforms.get(platform), dict) else {}
         search = value.get("search") if isinstance(value.get("search"), dict) else value
         if not isinstance(search, dict):
@@ -138,7 +141,7 @@ def validate_collection_options(options: dict[str, Any]) -> dict[str, Any]:
     if len(order) != len(set(order)):
         raise ValueError("采集平台顺序不能重复")
     if any(platform not in SUPPORTED_PLATFORMS for platform in order):
-        raise ValueError("采集平台只支持 boss、zhilian、51job 或 liepin")
+        raise ValueError("采集平台只支持 boss、zhilian、51job、liepin 或 yingjiesheng")
     if not isinstance(platforms, dict) or set(platforms) != set(order):
         raise ValueError("平台顺序与平台配置不一致")
     if not isinstance(options.get("auto_score", False), bool):
@@ -193,12 +196,19 @@ def validate_collection_options(options: dict[str, Any]) -> dict[str, Any]:
             if unsupported_cities:
                 names = "、".join(unsupported_cities)
                 raise ValueError(f"猎聘当前只开放已验证城市：{names} 尚未支持；不会猜测城市编码")
+        if platform == "yingjiesheng":
+            # The site has not exposed a currently verified city-code catalog.
+            # Filter the page's actual city text instead of accepting other
+            # platforms' codes or guessing a YingJieSheng encoding.
+            city_codes = {}
         try:
             max_pages = int(value.get("max_pages", 3))
         except (TypeError, ValueError) as exc:
             raise ValueError(f"{platform} 最大页数必须是整数") from exc
         if not 1 <= max_pages <= 10:
             raise ValueError(f"{platform} 最大页数范围为 1-10")
+        if platform == "yingjiesheng" and max_pages > YINGJIESHENG_PAGE_LIMIT:
+            raise ValueError(f"应届生求职最大页数为 {YINGJIESHENG_PAGE_LIMIT}")
         sort = str(value.get("sort") or "default").strip()
         if sort not in SORT_OPTIONS[platform]:
             raise ValueError(f"{platform} 排序方式无效")
@@ -316,6 +326,7 @@ class CollectionOrchestrator:
             "zhilian": ZhilianCollector,
             "51job": Job51Collector,
             "liepin": LiepinCollector,
+            "yingjiesheng": YingjieshengCollector,
         })
         self.run_id = run_id or str(uuid4())
         self.task_id = task_id
@@ -399,6 +410,8 @@ class CollectionOrchestrator:
                         if platform == "zhilian" and self._uses_default_registry
                         else LiepinCollector(config=self.config, safety_conn=conn)
                         if platform == "liepin" and self._uses_default_registry
+                        else YingjieshengCollector()
+                        if platform == "yingjiesheng" and self._uses_default_registry
                         else self.registry.get(platform)
                     )
                     result = collector.collect(request, hooks)

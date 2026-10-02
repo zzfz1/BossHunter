@@ -107,7 +107,7 @@ def _filtered_rows(conn: sqlite3.Connection, filters: dict[str, Any] | None = No
 		params.extend(status_values)
 	source_platforms = values("source_platform")
 	if source_platforms:
-		if any(value not in {"boss", "zhilian", "51job", "liepin"} for value in source_platforms):
+		if any(value not in {"boss", "zhilian", "51job", "liepin", "yingjiesheng"} for value in source_platforms):
 			raise ValueError("source_platform 参数无效")
 		placeholders = ",".join("?" for _ in source_platforms)
 		conditions.append(f"COALESCE(source_platform, 'boss') IN ({placeholders})")

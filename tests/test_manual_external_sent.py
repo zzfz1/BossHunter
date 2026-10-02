@@ -16,6 +16,7 @@ def _job(job_id: str, platform: str) -> dict:
     urls = {
         "zhilian": "https://www.zhaopin.com/jobdetail/example.htm",
         "liepin": "https://www.liepin.com/job/1234567890.shtml",
+        "yingjiesheng": "https://q.yingjiesheng.com/jobdetail/1001.html",
     }
     return {
         "id": job_id,
@@ -73,6 +74,23 @@ def test_manual_sent_supports_liepin_jobs():
     ]
 
 
+def test_manual_sent_supports_yingjiesheng_after_explicit_confirmation():
+    with tempfile.TemporaryDirectory() as temporary:
+        db = get_db(Path(temporary) / "jobs.db")
+        try:
+            insert_job(db, _job("yingjiesheng:1001", "yingjiesheng"))
+            result = mark_external_jobs_sent(db, ["yingjiesheng:1001"], confirmed=True)
+            row = db.execute(
+                "SELECT action, detail FROM history WHERE job_id = ?", ("yingjiesheng:1001",),
+            ).fetchone()
+        finally:
+            db.close()
+    assert result["affected_count"] == 1
+    assert (row["action"], row["detail"]) == (
+        "manual_sent", "用户在应届生求职完成投递后手动标记",
+    )
+
+
 def test_manual_sent_rejects_boss_and_does_not_partially_update_external_jobs():
     with tempfile.TemporaryDirectory() as temporary:
         db = get_db(Path(temporary) / "jobs.db")
@@ -90,7 +108,7 @@ def test_manual_sent_rejects_boss_and_does_not_partially_update_external_jobs():
 
     assert captured.value.blocked == [{
         "job_id": "boss",
-        "reasons": ["仅智联招聘、前程无忧和猎聘支持手动标记已发送"],
+        "reasons": ["仅智联招聘、前程无忧、猎聘和应届生求职支持手动标记已发送"],
     }]
     assert statuses == {"boss": "pending", "external": "pending"}
 

@@ -1,6 +1,10 @@
 import unittest
+import tempfile
+from pathlib import Path
 
 from bosshunter.collection.capabilities import PLATFORM_CAPABILITIES, platform_supports
+from bosshunter.db import get_db, insert_job
+from bosshunter.ai.greeter import generate_greetings
 
 
 class PlatformCapabilitiesTests(unittest.TestCase):
@@ -23,13 +27,35 @@ class PlatformCapabilitiesTests(unittest.TestCase):
         self.assertFalse(platform_supports("unknown", "collect"))
         self.assertFalse(platform_supports("nonexistent", "score"))
 
+    def test_yingjiesheng_only_collects_and_scores(self):
+        self.assertEqual(PLATFORM_CAPABILITIES["yingjiesheng"], frozenset({"collect", "score"}))
+
+    def test_yingjiesheng_job_cannot_enter_greeting_generation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "jobs.db"
+            db = get_db(path)
+            insert_job(db, {
+                "id": "yingjiesheng:1001", "source_platform": "yingjiesheng",
+                "source_job_id": "1001", "title": "示例岗位", "company": "示例公司",
+            })
+            db.close()
+            generated = generate_greetings(
+                {"profile": {"ai_greeting_enabled": False, "fixed_greeting": "您好"}},
+                job_ids=["yingjiesheng:1001"], db_path=path,
+            )
+            db = get_db(path)
+            greeting = db.execute("SELECT greeting FROM jobs WHERE id = ?", ("yingjiesheng:1001",)).fetchone()["greeting"]
+            db.close()
+        self.assertEqual(generated, 0)
+        self.assertFalse(greeting)
+
     def test_unknown_capability_returns_false(self):
         self.assertFalse(platform_supports("boss", "nonexistent"))
 
     def test_capability_map_keys(self):
         self.assertEqual(
             set(PLATFORM_CAPABILITIES),
-            {"boss", "zhilian", "51job", "liepin"},
+            {"boss", "zhilian", "51job", "liepin", "yingjiesheng"},
         )
 
 
