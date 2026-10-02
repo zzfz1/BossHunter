@@ -26,12 +26,13 @@ interface JobsTableProps {
 
 function safeJobUrl(job: Job): string | null {
   const platform = job.source_platform || 'boss'
-  if (platform !== 'boss' && platform !== 'zhilian' && platform !== '51job' && platform !== 'liepin') return null
+  if (platform !== 'boss' && platform !== 'zhilian' && platform !== '51job' && platform !== 'liepin' && platform !== 'yingjiesheng') return null
   try {
     const parsed = platform === 'boss'
       ? new URL(job.url || '', 'https://www.zhipin.com')
       : new URL(job.url || '')
-    if (parsed.protocol !== 'https:') return null
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return null
+    if (platform === 'yingjiesheng') return parsed.toString()
     const rootDomain = platform === 'boss'
       ? 'zhipin.com'
       : platform === 'zhilian'
@@ -142,7 +143,7 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
             <tbody>
               {jobs.map(job => {
                 const isExpanded = expanded === job.id
-                const isExternalPlatform = job.source_platform === 'zhilian' || job.source_platform === '51job' || job.source_platform === 'liepin'
+                const isExternalPlatform = job.source_platform === 'zhilian' || job.source_platform === '51job' || job.source_platform === 'liepin' || job.source_platform === 'yingjiesheng'
                 const jobUrl = safeJobUrl(job)
                 const alreadySent = ['sent', 'replied', 'resume_sent', 'needs_resume', 'follow_up_sent'].includes(job.status)
                 return (
@@ -214,7 +215,7 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
                                 onClick={() => onMarkManuallySent(job)}
                                 className="inline-flex items-center gap-1 rounded-lg bg-primary px-2 py-1.5 text-[11px] font-bold text-primary-foreground hover:opacity-90 disabled:bg-success-soft disabled:text-success disabled:opacity-100"
                               >
-                                <CheckCircle2 className="h-3.5 w-3.5" />{alreadySent ? '已发送' : '我已发送'}
+                                <CheckCircle2 className="h-3.5 w-3.5" />{job.source_platform === 'yingjiesheng' ? (alreadySent ? '已投递' : '我已投递') : (alreadySent ? '已发送' : '我已发送')}
                               </button>
                             )}
                             {onSoftDelete && (

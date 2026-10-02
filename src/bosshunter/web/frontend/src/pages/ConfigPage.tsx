@@ -44,7 +44,7 @@ const AI_SERVICES = {
 } as const
 
 type AiService = keyof typeof AI_SERVICES
-type PlatformId = 'boss' | 'zhilian' | '51job' | 'liepin'
+type PlatformId = 'boss' | 'zhilian' | '51job' | 'liepin' | 'yingjiesheng'
 
 const BOSS_FILTER_OPTIONS = {
   job_type: ['全职', '兼职', '实习'],
@@ -224,6 +224,11 @@ export default function ConfigPage() {
   }
 
   const updatePlatformCities = (platform: PlatformId, cities: string[]) => {
+    if (platform === 'yingjiesheng') {
+      updatePlatformSearch(platform, 'cities', cities)
+      updatePlatformSearch(platform, 'city_codes', {})
+      return
+    }
     const platformCityOptions = platform === 'zhilian' ? zhilianCityOptions : platform === 'liepin' ? liepinCityOptions : job51CityOptions
     const cityCodes = platform !== 'boss'
       ? Object.fromEntries(cities.map(city => {
@@ -239,7 +244,7 @@ export default function ConfigPage() {
   const setPlatformEnabled = (platform: PlatformId, enabled: boolean) => {
     updateConfig(`platforms.${platform}.enabled`, enabled)
     const currentOrder: PlatformId[] = Array.isArray(config?.collection?.default_order)
-      ? config.collection.default_order.filter((item: unknown): item is PlatformId => item === 'boss' || item === 'zhilian' || item === '51job' || item === 'liepin')
+      ? config.collection.default_order.filter((item: unknown): item is PlatformId => item === 'boss' || item === 'zhilian' || item === '51job' || item === 'liepin' || item === 'yingjiesheng')
       : ['boss'] as PlatformId[]
     const nextOrder = enabled
       ? [...currentOrder, ...(!currentOrder.includes(platform) ? [platform] : [])]
@@ -248,8 +253,8 @@ export default function ConfigPage() {
   }
 
   const setCollectionOrder = (value: string) => {
-    const enabled = (['boss', 'zhilian', '51job', 'liepin'] as PlatformId[]).filter(platform => config?.platforms?.[platform]?.enabled !== false)
-    const requested = value.split(',').filter((item): item is PlatformId => item === 'boss' || item === 'zhilian' || item === '51job' || item === 'liepin')
+    const enabled = (['boss', 'zhilian', '51job', 'liepin', 'yingjiesheng'] as PlatformId[]).filter(platform => config?.platforms?.[platform]?.enabled !== false)
+    const requested = value.split(',').filter((item): item is PlatformId => item === 'boss' || item === 'zhilian' || item === '51job' || item === 'liepin' || item === 'yingjiesheng')
     const next = [...requested, ...enabled.filter(platform => !requested.includes(platform))]
     updateConfig('collection.default_order', next.length ? next : ['boss'])
   }
@@ -415,12 +420,12 @@ export default function ConfigPage() {
         <SectionCard title="搜索设置" sectionKey="search" expanded={expandedSections} toggle={toggleSection}>
           <div className="space-y-4">
             <p className="rounded-xl border border-card-border bg-surface px-3 py-2 text-xs leading-5 text-muted">
-              智联、前程无忧和猎聘只自动采集、评分和生成招呼语；岗位池会提供原平台链接，你完成投递后可手动标记“已发送”。BossHunter 不会替你在这些平台发送、回复或监听。
+              智联、前程无忧和猎聘只自动采集、评分和生成招呼语；应届生求职仅采集与评分。岗位池可打开原岗位，你在平台投递后再手动标记。BossHunter 不会替你自动申请或发送。
             </p>
-            {(['boss', 'zhilian', '51job', 'liepin'] as PlatformId[]).map(platform => {
+            {(['boss', 'zhilian', '51job', 'liepin', 'yingjiesheng'] as PlatformId[]).map(platform => {
               const search = platformSearch(platform)
               const label = PLATFORM_LABELS[platform]
-              const platformCityOptions = platform === 'zhilian' ? zhilianCityOptions : platform === 'liepin' ? liepinCityOptions : job51CityOptions
+              const platformCityOptions = platform === 'zhilian' ? zhilianCityOptions : platform === 'liepin' ? liepinCityOptions : platform === '51job' ? job51CityOptions : []
               const enabled = config.platforms?.[platform]?.enabled ?? platform === 'boss'
               const cities = Array.isArray(search.cities) && search.cities.length
                 ? search.cities
@@ -451,8 +456,8 @@ export default function ConfigPage() {
                       /> : <>
                         <Input list={`config-${platform}-city-options`} value={cityInput} onChange={event => updatePlatformCities(platform, event.target.value.split(/[,，]/).map(value => value.trim()).filter(Boolean))} placeholder={platform === '51job' ? '如：上海' : '如：深圳'} />
                         <datalist id={`config-${platform}-city-options`}>{platformCityOptions.map(city => <option key={city.code} value={city.name} />)}</datalist>
-                        <p className="mt-1 text-xs text-muted">{PLATFORM_SHORT_LABELS[platform]}只使用已验证的城市编码；当前内置 {platformCityOptions.length} 个城市。</p>
-                        {!!cities.length && <div className="mt-2 flex flex-wrap gap-1">{cities.map((city: string) => {
+                        <p className="mt-1 text-xs text-muted">{platform === 'yingjiesheng' ? '城市按岗位实际地点过滤；目前没有已验证的站点城市编码。' : `${PLATFORM_SHORT_LABELS[platform]}只使用已验证的城市编码；当前内置 ${platformCityOptions.length} 个城市。`}</p>
+                        {platform !== 'yingjiesheng' && !!cities.length && <div className="mt-2 flex flex-wrap gap-1">{cities.map((city: string) => {
                           const matched = platformCityOptions.find(option => option.name.replace(/市$/, '') === city.replace(/市$/, ''))
                           return <span key={city} className={`rounded-full px-2 py-1 text-xs ${matched ? 'bg-success-soft text-success' : 'bg-warning-soft text-warning'}`}>{city} · {matched ? '已自动识别' : '暂未收录'}</span>
                         })}</div>}
@@ -460,7 +465,7 @@ export default function ConfigPage() {
                     </Field>
                     <div className="grid gap-3 md:grid-cols-2">
                       <Field label="最大页数">
-                        <Input type="number" value={search.max_pages || (platform === 'boss' ? 3 : 1)} onChange={event => updatePlatformSearch(platform, 'max_pages', Number(event.target.value))} min={1} max={10} />
+                        <Input type="number" value={search.max_pages || (platform === 'boss' ? 3 : 1)} onChange={event => updatePlatformSearch(platform, 'max_pages', Number(event.target.value))} min={1} max={platform === 'yingjiesheng' ? 3 : 10} />
                         {platform === 'boss' && bossTheoreticalPages > 0 && (
                           <p className={`mt-1 rounded-lg px-3 py-2 text-xs ${bossTheoreticalExceedsLimit ? 'bg-warning-soft font-bold text-warning' : 'bg-success-soft text-success'}`}>
                             理论最多 {bossTheoreticalPages} 页（{bossEstimateKeywords.length} 个关键词 × {bossEstimateCities.length} 个城市 × {bossEstimateMaxPages} 页）。
@@ -473,7 +478,7 @@ export default function ConfigPage() {
                       <Field label="排序">
                         <Select value={search.sort || 'default'} onChange={event => updatePlatformSearch(platform, 'sort', event.target.value)}>
                           <option value="default">默认</option>
-                          {platform !== '51job' && <option value="newest">最新</option>}
+                          {platform !== '51job' && platform !== 'yingjiesheng' && <option value="newest">最新</option>}
                         </Select>
                       </Field>
                     </div>
@@ -529,6 +534,7 @@ export default function ConfigPage() {
                   <option value="zhilian,boss">智联招聘 → BOSS 直聘</option>
                   <option value="51job">前程无忧</option>
                   <option value="liepin">猎聘</option>
+                  <option value="yingjiesheng">应届生求职</option>
                   <option value="boss,zhilian,51job">BOSS → 智联 → 前程无忧</option>
                   <option value="boss,zhilian,51job,liepin">BOSS → 智联 → 前程无忧 → 猎聘</option>
                 </Select>

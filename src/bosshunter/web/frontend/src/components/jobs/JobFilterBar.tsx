@@ -88,6 +88,7 @@ export function JobFilterBar({
             { value: 'zhilian', label: '智联招聘' },
             { value: '51job', label: '前程无忧' },
             { value: 'liepin', label: '猎聘' },
+            { value: 'yingjiesheng', label: '应届生求职' },
           ]} />
         )}
         <MultiSelect className={cn(controlClass, compact && 'xl:order-1')} compact={compact} value={filters.education} onChange={value => updateMulti('education', value)} placeholder="学历：全部" options={[
