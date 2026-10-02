@@ -17,6 +17,7 @@ interface JobsTableProps {
   onToggleSelected: (id: string) => void
   onSoftDelete?: (job: Job) => void
   onMarkManuallySent?: (job: Job) => void
+  onStatusChange?: (job: Job, status: string) => void
   loading?: boolean
   sortBy: JobSortKey
   sortOrder: JobSortOrder
@@ -25,12 +26,13 @@ interface JobsTableProps {
 
 function safeJobUrl(job: Job): string | null {
   const platform = job.source_platform || 'boss'
-  if (platform !== 'boss' && platform !== 'zhilian' && platform !== '51job' && platform !== 'liepin') return null
+  if (platform !== 'boss' && platform !== 'zhilian' && platform !== '51job' && platform !== 'liepin' && platform !== 'yingjiesheng') return null
   try {
     const parsed = platform === 'boss'
       ? new URL(job.url || '', 'https://www.zhipin.com')
       : new URL(job.url || '')
-    if (parsed.protocol !== 'https:') return null
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return null
+    if (platform === 'yingjiesheng') return parsed.toString()
     const rootDomain = platform === 'boss'
       ? 'zhipin.com'
       : platform === 'zhilian'
@@ -64,11 +66,11 @@ function statusVariant(status: string) {
   return variants.has(status) ? status : 'default'
 }
 
-export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedIds, onToggleSelected, onSoftDelete, onMarkManuallySent, loading = false, sortBy, sortOrder, onSortChange }: JobsTableProps) {
+export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedIds, onToggleSelected, onSoftDelete, onMarkManuallySent, onStatusChange, loading = false, sortBy, sortOrder, onSortChange }: JobsTableProps) {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [pageInput, setPageInput] = useState(String(page + 1))
   const totalPages = Math.ceil(total / pageSize)
-  const hasActions = Boolean(onSoftDelete || onMarkManuallySent)
+  const hasActions = Boolean(onSoftDelete || onMarkManuallySent || onStatusChange)
 
   useEffect(() => {
     setPageInput(String(page + 1))
@@ -141,7 +143,7 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
             <tbody>
               {jobs.map(job => {
                 const isExpanded = expanded === job.id
-                const isExternalPlatform = job.source_platform === 'zhilian' || job.source_platform === '51job' || job.source_platform === 'liepin'
+                const isExternalPlatform = job.source_platform === 'zhilian' || job.source_platform === '51job' || job.source_platform === 'liepin' || job.source_platform === 'yingjiesheng'
                 const jobUrl = safeJobUrl(job)
                 const alreadySent = ['sent', 'replied', 'resume_sent', 'needs_resume', 'follow_up_sent'].includes(job.status)
                 return (
@@ -213,13 +215,31 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
                                 onClick={() => onMarkManuallySent(job)}
                                 className="inline-flex items-center gap-1 rounded-lg bg-primary px-2 py-1.5 text-[11px] font-bold text-primary-foreground hover:opacity-90 disabled:bg-success-soft disabled:text-success disabled:opacity-100"
                               >
-                                <CheckCircle2 className="h-3.5 w-3.5" />{alreadySent ? '已发送' : '我已发送'}
+                                <CheckCircle2 className="h-3.5 w-3.5" />{job.source_platform === 'yingjiesheng' ? (alreadySent ? '已投递' : '我已投递') : (alreadySent ? '已发送' : '我已发送')}
                               </button>
                             )}
                             {onSoftDelete && (
                               <button type="button" onClick={() => onSoftDelete(job)} className="rounded-lg p-2 text-muted hover:bg-danger-soft hover:text-danger" aria-label={`将 ${job.company} ${job.title} 移入回收站`}>
                                 <Trash2 className="h-4 w-4" />
                               </button>
+                            )}
+                            {onStatusChange && !alreadySent && (
+                              <select
+                                defaultValue=""
+                                aria-label={`修改 ${job.company} ${job.title} 状态`}
+                                onChange={event => {
+                                  const status = event.target.value
+                                  if (status) onStatusChange(job, status)
+                                  event.currentTarget.value = ''
+                                }}
+                                className="rounded-lg border border-card-border bg-card px-2 py-1.5 text-[11px] font-bold text-foreground"
+                              >
+                                <option value="">修改状态</option>
+                                <option value="ready">待确认</option>
+                                <option value="filtered">已过滤</option>
+                                <option value="skipped">已跳过</option>
+                                <option value="rejected">已拒绝</option>
+                              </select>
                             )}
                           </div>
                         </td>

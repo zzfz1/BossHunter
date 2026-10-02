@@ -643,6 +643,8 @@ def generate_greetings(config: dict, job_ids: list[str] | None = None, db_path=N
     ``db_path`` lets web callers pin the runtime database; without it the
     module-level default (CWD-relative) is used for CLI compatibility.
     """
+    from bosshunter.collection.capabilities import platform_supports
+
     error = greeting_config_error(config)
     if error:
         config["_workbench_greeting_report"] = {
@@ -672,11 +674,13 @@ def generate_greetings(config: dict, job_ids: list[str] | None = None, db_path=N
         job
         for job in jobs
         if str(job.get("status") or "approved") in GREETING_ALLOWED_STATUSES
+        and platform_supports(str(job.get("source_platform") or "boss"), "greet")
     ]
     conflict_ids = [
         str(job["id"])
         for job in jobs
         if str(job.get("status") or "approved") not in GREETING_ALLOWED_STATUSES
+        or not platform_supports(str(job.get("source_platform") or "boss"), "greet")
     ]
     jobs = allowed_jobs
     # A version choice resolves review, but does not authorize this batch to send it.
