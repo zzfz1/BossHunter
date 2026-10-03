@@ -526,8 +526,9 @@ const server = http.createServer(async (req, res) => {
       // challenge. It never reads or returns cookies, challenge tokens, or
       // request parameters, and performs only one ordinary mouse drag.
       const geometry = await sendCDP('Runtime.evaluate', {
-        expression: `(() => {
-          if (location.hostname !== 'q.yingjiesheng.com' || document.title !== 'Verification')
+        expression: String.raw`(() => {
+          if (location.hostname !== 'q.yingjiesheng.com' || document.title !== 'Verification' ||
+              !(/^\/jobs\/search\//.test(location.pathname) || /^\/jobdetail\/\d+\.html$/.test(location.pathname)))
             return { error: 'not_verification_page' };
           const handle = document.querySelector('#aliyunCaptcha-sliding-slider');
           const track = handle?.parentElement;
@@ -535,10 +536,14 @@ const server = http.createServer(async (req, res) => {
             return { error: 'unsupported_challenge' };
           const h = handle.getBoundingClientRect();
           const t = track.getBoundingClientRect();
+          const style = getComputedStyle(handle);
+          const topmost = document.elementFromPoint(h.x + h.width / 2, h.y + h.height / 2);
           if (h.width < 20 || h.width > 80 || t.width < 120 || t.width > 600 ||
               h.height < 20 || t.height < 20 ||
               h.x < t.x - 2 || h.right > t.right + 2 ||
-              h.y < 0 || h.bottom > innerHeight || t.x < 0 || t.right > innerWidth)
+              h.y < 0 || h.bottom > innerHeight || t.x < 0 || t.right > innerWidth ||
+              style.display === 'none' || style.visibility === 'hidden' ||
+              !topmost || (topmost !== handle && !handle.contains(topmost)))
             return { error: 'invalid_geometry' };
           return { x: h.x + h.width / 2, y: h.y + h.height / 2,
                    distance: t.right - h.right };
