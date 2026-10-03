@@ -69,6 +69,17 @@ class RuntimeClient:
     def click_at(self, target_id: str, selector_or_xy: str) -> bool:
         return self._post_ok("/clickAt", params={"target": target_id}, content=selector_or_xy, timeout=10)
 
+    def solve_yingjiesheng_slider_once(self, target_id: str) -> bool:
+        """Make one bounded drag on the first-party verification page."""
+        try:
+            response = httpx.post(
+                f"{self.base_url}/yingjiesheng/slide-once",
+                params={"target": target_id}, timeout=15, trust_env=False,
+            )
+            return response.status_code == 200 and response.json().get("status") == "passed"
+        except (httpx.HTTPError, ValueError):
+            return False
+
     def type_text(self, target_id: str, text: str, human: bool = False) -> bool:
         params: dict[str, Any] = {"target": target_id}
         if human:

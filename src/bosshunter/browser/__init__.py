@@ -101,6 +101,13 @@ def click_at(target_id: str, selector_or_xy: str) -> bool:
     return _client().click_at(target_id, selector_or_xy)
 
 
+def solve_yingjiesheng_slider_once(target_id: str) -> bool:
+    """Attempt the YingJieSheng first-party drag once in the current Chrome tab."""
+    if not _ready():
+        return False
+    return _client().solve_yingjiesheng_slider_once(target_id)
+
+
 def type_text(target_id: str, text: str, human: bool = False) -> bool:
     """Insert text using CDP input events."""
     if not _ready():

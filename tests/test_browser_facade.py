@@ -3,6 +3,22 @@ from unittest.mock import Mock, patch
 
 
 class BrowserFacadeTests(unittest.TestCase):
+    @patch("bosshunter.browser.client.httpx.post")
+    def test_yingjiesheng_slider_requires_explicit_pass_response(self, post):
+        from bosshunter.browser.client import RuntimeClient
+
+        post.return_value.status_code = 200
+        post.return_value.json.return_value = {"status": "passed"}
+        self.assertTrue(RuntimeClient({}).solve_yingjiesheng_slider_once("tab-1"))
+        self.assertEqual(post.call_args.kwargs["params"], {"target": "tab-1"})
+        self.assertFalse(post.call_args.kwargs["trust_env"])
+
+        post.return_value.json.return_value = {"status": "rejected"}
+        self.assertFalse(RuntimeClient({}).solve_yingjiesheng_slider_once("tab-1"))
+        post.return_value.status_code = 409
+        post.return_value.json.return_value = {"status": "passed"}
+        self.assertFalse(RuntimeClient({}).solve_yingjiesheng_slider_once("tab-1"))
+
     @patch("bosshunter.browser.client.httpx.get")
     def test_runtime_client_allows_slow_new_tab_creation(self, get):
         from bosshunter.browser.client import RuntimeClient

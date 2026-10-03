@@ -516,6 +516,76 @@ const server = http.createServer(async (req, res) => {
       await new Promise((resolve) => setTimeout(resolve, 80));
       await sendCDP('Input.dispatchMouseEvent', { type: 'mouseReleased', x: coord.x, y: coord.y, button: 'left', clickCount: 1 }, sessionId);
       sendJson(res, { clicked: true, x: coord.x, y: coord.y, tag: coord.tag, text: coord.text, source: coord.source });
+    } else if (pathname === '/yingjiesheng/slide-once') {
+      if (req.method !== 'POST') {
+        sendJson(res, { error: 'POST required' }, 405);
+        return;
+      }
+      const sessionId = await ensureSession(q.target);
+      // This endpoint is deliberately limited to the verified first-party
+      // challenge. It never reads or returns cookies, challenge tokens, or
+      // request parameters, and performs only one ordinary mouse drag.
+      const geometry = await sendCDP('Runtime.evaluate', {
+        expression: `(() => {
+          if (location.hostname !== 'q.yingjiesheng.com' || document.title !== 'Verification')
+            return { error: 'not_verification_page' };
+          const handle = document.querySelector('#aliyunCaptcha-sliding-slider');
+          const track = handle?.parentElement;
+          if (!handle || !track || !track.classList.contains('sliding'))
+            return { error: 'unsupported_challenge' };
+          const h = handle.getBoundingClientRect();
+          const t = track.getBoundingClientRect();
+          if (h.width < 20 || h.width > 80 || t.width < 120 || t.width > 600 ||
+              h.height < 20 || t.height < 20 ||
+              h.x < t.x - 2 || h.right > t.right + 2 ||
+              h.y < 0 || h.bottom > innerHeight || t.x < 0 || t.right > innerWidth)
+            return { error: 'invalid_geometry' };
+          return { x: h.x + h.width / 2, y: h.y + h.height / 2,
+                   distance: t.right - h.right };
+        })()`,
+        returnByValue: true,
+      }, sessionId);
+      const drag = geometry.result?.result?.value;
+      if (!drag || drag.error || drag.distance < 20 || drag.distance > 560) {
+        sendJson(res, { status: 'unavailable', reason: drag?.error || 'invalid_geometry' }, 409);
+        return;
+      }
+      const { x, y, distance } = drag;
+      let pressed = false;
+      try {
+        await sendCDP('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' }, sessionId);
+        await sendCDP('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 }, sessionId);
+        pressed = true;
+        for (let step = 1; step <= 24; step++) {
+          await sendCDP('Input.dispatchMouseEvent', {
+            type: 'mouseMoved', x: x + distance * step / 24, y, button: 'left', buttons: 1,
+          }, sessionId);
+          await new Promise((resolve) => setTimeout(resolve, 35));
+        }
+      } finally {
+        if (pressed) {
+          await sendCDP('Input.dispatchMouseEvent', {
+            type: 'mouseReleased', x: x + distance, y, button: 'left', buttons: 0, clickCount: 1,
+          }, sessionId);
+        }
+      }
+      // A rejected drag is reported to the collector; the runtime never
+      // reloads the page or makes another attempt.
+      let passed = false;
+      for (let check = 0; check < 10; check++) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const result = await sendCDP('Runtime.evaluate', {
+          expression: `(() => ({ passed: location.hostname === 'q.yingjiesheng.com' &&
+            document.title !== 'Verification' &&
+            !!document.querySelector('.detail-content, .search-list-item-wrapper') }))()`,
+          returnByValue: true,
+        }, sessionId);
+        if (result.result?.result?.value?.passed) {
+          passed = true;
+          break;
+        }
+      }
+      sendJson(res, { status: passed ? 'passed' : 'rejected' });
     } else if (pathname === '/setFiles') {
       const sessionId = await ensureSession(q.target);
       const body = JSON.parse(await readBody(req));
