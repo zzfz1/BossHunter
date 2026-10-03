@@ -410,7 +410,9 @@ class CollectionOrchestrator:
                         if platform == "zhilian" and self._uses_default_registry
                         else LiepinCollector(config=self.config, safety_conn=conn)
                         if platform == "liepin" and self._uses_default_registry
-                        else YingjieshengCollector()
+                        else YingjieshengCollector(auto_verify_slider=(
+                            self.config.get("platforms", {}).get("yingjiesheng", {}).get("auto_verify_slider") is True
+                        ))
                         if platform == "yingjiesheng" and self._uses_default_registry
                         else self.registry.get(platform)
                     )

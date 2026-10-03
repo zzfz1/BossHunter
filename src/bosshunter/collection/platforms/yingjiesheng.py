@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import quote, urlparse
 
-from bosshunter.browser import click, close_tab, evaluate, navigate, new_tab, wait_for_load
+from bosshunter.browser import click, close_tab, evaluate, navigate, new_tab, solve_yingjiesheng_slider_once, wait_for_load
 from bosshunter.collection.base import CollectionBlockedError, CollectorHooks
 from bosshunter.collection.models import JobCandidate, PlatformCollectionRequest, PlatformCollectionResult
 
@@ -104,6 +104,7 @@ class YingjieshengBrowser:
     click: Callable[[str, str], bool] = click
     evaluate: Callable[..., Any] = evaluate
     wait_for_load: Callable[..., bool] = wait_for_load
+    solve_slider_once: Callable[[str], bool] = solve_yingjiesheng_slider_once
 
 
 def _payload(raw: Any) -> dict[str, Any]:
@@ -165,12 +166,15 @@ class YingjieshengCollector:
         sleep: Callable[[float], None] = time.sleep,
         page_delay: tuple[float, float] = PAGE_DELAY,
         detail_delay: tuple[float, float] = DETAIL_DELAY,
+        auto_verify_slider: bool = False,
     ):
         self.browser = browser or YingjieshengBrowser()
         self.uniform = uniform
         self.sleep = sleep
         self.page_delay = page_delay
         self.detail_delay = detail_delay
+        self.auto_verify_slider = auto_verify_slider
+        self._verification_attempted = False
 
     @staticmethod
     def _check_status(payload: dict[str, Any]) -> str:
@@ -206,6 +210,22 @@ class YingjieshengCollector:
                 return {"status": "stopped"}
         raise CollectionBlockedError("render_timeout", "应届生求职页面未完成加载，已停止采集")
 
+    def _read_with_verification(
+        self, tab: str, expression: str, hooks: CollectorHooks, *, page: int | None = None,
+    ) -> dict[str, Any]:
+        result = self._read(tab, expression, hooks, page=page)
+        if result.get("status") != "verification" or not self.auto_verify_slider:
+            return result
+        if self._verification_attempted:
+            raise CollectionBlockedError("verification_required", "应届生求职再次要求验证，已停止采集")
+        if hooks.stop_event is not None and hooks.stop_event.is_set():
+            return {"status": "stopped"}
+        self._verification_attempted = True
+        hooks.on_event(phase="verification", message="应届生求职滑块验证：仅尝试一次标准鼠标拖动")
+        if not self.browser.solve_slider_once(tab):
+            raise CollectionBlockedError("verification_failed", "应届生求职滑块验证未通过，请人工处理后重新采集")
+        return self._read(tab, expression, hooks, page=page)
+
     def collect(self, request: PlatformCollectionRequest, hooks: CollectorHooks) -> PlatformCollectionResult:
         if request.max_pages > PAGE_LIMIT:
             raise CollectionBlockedError("page_limit", f"应届生求职最多采集 {PAGE_LIMIT} 页")
@@ -228,7 +248,7 @@ class YingjieshengCollector:
                     elif not self.browser.click(target, ".el-pagination .btn-next:not([disabled])"):
                         raise CollectionBlockedError("navigation_failed", "应届生求职无法安全翻页")
                     hooks.on_event(phase="loading_list", keyword=keyword, page=page, message="只读采集；城市按岗位实际地点过滤")
-                    payload = self._read(target, JS_LIST, hooks, page=page)
+                    payload = self._read_with_verification(target, JS_LIST, hooks, page=page)
                     if payload.get("status") == "stopped":
                         return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
                     status = self._check_status(payload)
@@ -265,7 +285,7 @@ class YingjieshengCollector:
                                 if not self.browser.navigate(detail_tab, candidate.url):
                                     raise CollectionBlockedError("navigation_failed", "应届生求职详情页无法安全打开")
                                 self.browser.wait_for_load(detail_tab, timeout=15)
-                                detail = self._read(detail_tab, JS_DETAIL, hooks)
+                                detail = self._read_with_verification(detail_tab, JS_DETAIL, hooks)
                             finally:
                                 self.browser.close_tab(detail_tab)
                             if detail.get("status") == "stopped":

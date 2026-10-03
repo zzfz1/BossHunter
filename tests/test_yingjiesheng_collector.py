@@ -24,13 +24,15 @@ def fixture(name):
 
 
 class FakeBrowser:
-    def __init__(self, lists, detail=None):
+    def __init__(self, lists, detail=None, solve_result=True):
         self.lists = iter(lists)
         self.detail = detail or fixture("yingjiesheng_detail.json")
         self.urls = []
         self.clicks = []
         self.closed = []
         self.next_tab = 0
+        self.solve_result = solve_result
+        self.solve_calls = []
 
     def new_tab(self, _url, background=True):
         self.next_tab += 1
@@ -50,6 +52,10 @@ class FakeBrowser:
 
     def wait_for_load(self, tab, timeout=15):
         return True
+
+    def solve_slider_once(self, tab):
+        self.solve_calls.append(tab)
+        return self.solve_result
 
     def evaluate(self, tab, expression):
         if "search-list-item-wrapper" in expression:
@@ -74,8 +80,11 @@ def hooks(saved, *, stop=None, existing=None):
     )
 
 
-def collector(browser):
-    return YingjieshengCollector(browser=browser, uniform=lambda low, high: 0, sleep=lambda _: None)
+def collector(browser, *, auto_verify_slider=False):
+    return YingjieshengCollector(
+        browser=browser, uniform=lambda low, high: 0, sleep=lambda _: None,
+        auto_verify_slider=auto_verify_slider,
+    )
 
 
 def test_list_detail_external_pagination_and_duplicate_filter():
@@ -125,6 +134,35 @@ def test_blocks_without_retry(status, code):
     assert captured.value.code == code
     assert len(browser.urls) == 1
     assert browser.closed == ["1"]
+
+
+def test_opted_in_slider_attempts_once_and_resumes_read_only_collection():
+    ready = {"status": "ready", "jobs": [fixture("yingjiesheng_list.json")["jobs"][1]],
+             "page_index": 1, "has_next": False}
+    browser = FakeBrowser([{"status": "verification"}, ready])
+    saved = []
+    result = collector(browser, auto_verify_slider=True).collect(request(max_pages=1), hooks(saved))
+    assert result.status == "completed"
+    assert browser.solve_calls == ["1"]
+    assert len(saved) == 1
+    assert browser.closed == ["1"]
+
+
+def test_slider_failure_and_repeated_challenge_fail_closed():
+    failed = FakeBrowser([{"status": "verification"}], solve_result=False)
+    with pytest.raises(CollectionBlockedError) as captured:
+        collector(failed, auto_verify_slider=True).collect(request(max_pages=1), hooks([]))
+    assert captured.value.code == "verification_failed"
+    assert failed.solve_calls == ["1"]
+    assert failed.closed == ["1"]
+
+    first_party = fixture("yingjiesheng_list.json")["jobs"][0]
+    ready = {"status": "ready", "jobs": [first_party], "page_index": 1, "has_next": False}
+    repeated = FakeBrowser([{"status": "verification"}, ready], detail={"status": "verification"})
+    with pytest.raises(CollectionBlockedError) as captured:
+        collector(repeated, auto_verify_slider=True).collect(request(max_pages=1), hooks([]))
+    assert captured.value.code == "verification_required"
+    assert repeated.solve_calls == ["1"]
 
 
 def test_malformed_response_and_stop_event():

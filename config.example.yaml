@@ -85,6 +85,8 @@ platforms:
       sort: default
   yingjiesheng:
     enabled: false
+    # 仅对本站阿里云纯拖动滑块尝试一次；失败后仍停止并等待人工处理。
+    auto_verify_slider: false
     # 采集、评分、草稿和人工进度记录；城市按岗位实际地点过滤，不使用其他平台城市编码。
     # 单岗位申请须先通过真实登录态验收；启用后仍需逐岗人工确认。
     application_enabled: false
